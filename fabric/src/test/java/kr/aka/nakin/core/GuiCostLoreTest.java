@@ -72,6 +72,16 @@ class GuiCostLoreTest {
                 "단가의 정수배가 아니면 이름을 붙이지 않는다");
     }
 
+    @Test void 유물_감정_버튼() {
+        // 2026-10-01 사용자 스크린샷 원문 — 채팅엔 아무것도 안 뜨고 잔고만 −1,000
+        List<GuiCostLore.GuiCost> c = GuiCostLore.parse("유물 감정하기", List.of(
+                "미확인 유물의 숨겨진 힘을 확인합니다", "", "필요 재료:", "1,000냥", "", "▶ 클릭하여 감정하기"));
+        assertEquals(1, c.size(), c.toString());
+        assertEquals(1_000, c.get(0).amount());
+        assertEquals("유물 감정", c.get(0).label());
+        assertEquals("이용료", c.get(0).category());
+    }
+
     @Test void 쉼표와_냥_표기도_읽는다() {
         List<GuiCostLore.GuiCost> c = GuiCostLore.parse("조율하기", List.of("[ 필요한 재료 ]", "- 15,000냥"));
         assertEquals(15_000, c.get(0).amount());

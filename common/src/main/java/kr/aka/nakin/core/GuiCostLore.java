@@ -41,14 +41,16 @@ public final class GuiCostLore {
         return new GuiCost(c.category(), product, c.amount());
     }
 
-    private static final Pattern MATERIALS_HEAD = Pattern.compile("필요한 재료");
+    /** "[ 필요한 재료 ]"(대장간) / "필요 재료:"(유물 감정, 2026-10-01 사용자 스크린샷). */
+    private static final Pattern MATERIALS_HEAD = Pattern.compile("필요한? 재료");
     /**
      * NPC 상점 구매 버튼 — "클릭하여 구매 x1 / … / 구매: 20 냥"(2026-09-28 사용자 스크린샷).
      * 구매는 채팅("[동글상점] … 구매에 성공했습니다. 비용: N 냥!")으로도 잡히므로 이건 예비 근거다.
      */
     private static final Pattern BUY_PRICE = Pattern.compile("^구매\\s*:\\s*([0-9][0-9,]*)\\s*냥");
     /** " - 120000원 [✓]" / "- 1,500냥" — 재료 목록 안의 돈 줄. */
-    private static final Pattern MONEY_LINE = Pattern.compile("^-\\s*([0-9][0-9,]*)\\s*(?:원|냥)(?:\\s|$|\\[)");
+    //   감정 창은 앞 대시 없이 "1,000냥" 만 쓴다.
+    private static final Pattern MONEY_LINE = Pattern.compile("^(?:-\\s*)?([0-9][0-9,]*)\\s*(?:원|냥)(?:\\s|$|\\[)");
 
     /**
      * @param itemName 슬롯 아이템 이름
