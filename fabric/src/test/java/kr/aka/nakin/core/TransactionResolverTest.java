@@ -209,6 +209,38 @@ class TransactionResolverTest {
         assertTrue(notices.isEmpty(), "미확인 알림도 없다");
     }
 
+    private static TradeSignal fleaSold(int qty, String item) {
+        return new TradeSignal(Flow.EXPENSE, "플리마켓", 0, qty, item, "raw", true, true, null);
+    }
+
+    @Test void 겹친_플리마켓_알림은_각자_자기_잔고변동과_짝() {
+        // 다이아 2개(−328) → 5초 뒤 철 5개(−100). 사이에 상점 창 구매 −200,000 이 끼어 있다.
+        resolver.noteGuiCosts(List.of(new GuiCostLore.GuiCost("NPC 상점", "레전더리 스톤", 200_000)), 2_000);
+        resolver.onSignal(fleaSold(2, "다이아몬드"), 0);
+        resolver.onDelta(-328, 900);
+        resolver.onDelta(-200_000, 3_000);
+        resolver.onSignal(fleaSold(5, "철"), 5_000);
+        resolver.onDelta(-100, 5_800);
+        for (long t = 0; t <= 40_000; t += 50) resolver.tick(t);
+        assertEquals(3, out.size(), out.toString());
+        assertEquals("다이아몬드", out.get(0).label);
+        assertEquals(328, out.get(0).amount);
+        assertEquals(2, out.get(0).qty);
+        assertTrue(out.stream().anyMatch(r -> r.label.equals("철") && r.amount == 100), out.toString());
+        assertTrue(out.stream().anyMatch(r -> r.label.equals("레전더리 스톤") && r.amount == 200_000),
+                "상점 구매를 플리마켓이 가져가면 안 된다: " + out);
+    }
+
+    @Test void 동시에_온_플리마켓_알림의_합쳐진_잔고변동은_나눈다() {
+        resolver.onSignal(fleaSold(2, "다이아몬드"), 0);
+        resolver.onSignal(fleaSold(2, "다이아몬드"), 400);
+        resolver.onDelta(-656, 1_000); // 잔고가 한 번에 내려옴
+        for (long t = 0; t <= 20_000; t += 50) resolver.tick(t);
+        assertEquals(2, out.size(), out.toString());
+        assertEquals(328, out.get(0).amount);
+        assertEquals(328, out.get(1).amount);
+    }
+
     @Test void 연속_시도로_합쳐진_잔고변동은_횟수로_나눈다() {
         resolver.onSignal(TradeSignal.byDelta(Flow.EXPENSE, "인챈트", "모루 인챈트", "raw"), 0);
         resolver.onSignal(TradeSignal.byDelta(Flow.EXPENSE, "인챈트", "모루 인챈트", "raw"), 300);

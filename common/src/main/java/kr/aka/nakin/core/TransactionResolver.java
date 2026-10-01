@@ -205,12 +205,14 @@ public final class TransactionResolver {
         }
     }
 
-    /** 짝 없는 잔고 감소가 최근 창에 보인 비용(또는 그 정수배)과 같으면 결제 기록. */
-    private void settleByGuiCost(PendingDelta pd) {
+    /** 창 비용 매칭 결과: 단가 × 횟수. */
+    private record GuiMatch(SeenCost cost, long unit, int times) {}
+
+    /** 이 잔고 감소가 최근 창에 보인 비용(또는 그 정수배)과 같으면 그 결제. 없으면 null. */
+    private GuiMatch findGuiCost(PendingDelta pd) {
+        if (pd.delta >= 0) return null;
         long mag = -pd.delta;
-        SeenCost best = null;
-        long unit = 0;
-        int times = 0;
+        GuiMatch best = null;
         for (var e : guiCosts.entrySet()) {
             SeenCost sc = e.getValue();
             if (pd.ts - sc.seenAt > GUI_COST_FRESH_MS || sc.seenAt - pd.ts > GUI_COST_FRESH_MS) continue;
@@ -219,60 +221,108 @@ public final class TransactionResolver {
             if (Math.abs(mag - cost) <= AMOUNT_TOLERANCE) n = 1;
             else if (cost > 0 && mag % cost == 0 && mag / cost <= GUI_COST_MAX_MULTIPLE) n = (int) (mag / cost);
             else continue;
-            if (best == null || n < times) { best = sc; unit = cost; times = n; } // 배수보다 정확 일치 우선
+            if (best == null || n < best.times) best = new GuiMatch(sc, cost, n); // 배수보다 정확 일치 우선
         }
-        if (best == null) return;
-        for (int i = 0; i < times; i++) {
-            TradeSignal sig = TradeSignal.of(TradeSignal.Flow.EXPENSE, best.category, i == times - 1 ? mag - unit * (times - 1) : unit,
-                    0, best.label, "gui-cost");
-            emit(classifier.classifyByDelta(sig, sig.amount, pd.ts,
-                    "창 표시 비용과 잔고 변동 일치" + (times > 1 ? " (" + times + "회 합산 분할)" : "")));
-        }
-        lastSettleInfo = best.label + " " + times + "건 — 창 표시 비용으로 기록";
+        return best;
     }
 
+    /** 짝 없는 잔고 감소가 최근 창에 보인 비용(또는 그 정수배)과 같으면 결제 기록. */
+    private void settleByGuiCost(PendingDelta pd) {
+        GuiMatch m = findGuiCost(pd);
+        if (m == null) return;
+        long mag = -pd.delta;
+        for (int i = 0; i < m.times; i++) {
+            TradeSignal sig = TradeSignal.of(TradeSignal.Flow.EXPENSE, m.cost.category,
+                    i == m.times - 1 ? mag - m.unit * (m.times - 1) : m.unit, 0, m.cost.label, "gui-cost");
+            emit(classifier.classifyByDelta(sig, sig.amount, pd.ts,
+                    "창 표시 비용과 잔고 변동 일치" + (m.times > 1 ? " (" + m.times + "회 합산 분할)" : "")));
+        }
+        lastSettleInfo = m.cost.label + " " + m.times + "건 — 창 표시 비용으로 기록";
+    }
+
+    /** 잔고 표시가 채팅보다 먼저 갱신되는 경우를 위한 여유. */
+    static final long DELTA_LEAD_MS = 1_000;
+    /** 같은 종류 알림이 이 간격 안에 연달아 오면 한 묶음 — 잔고가 합쳐 한 번에 내려올 수 있다. */
+    static final long BURST_MS = 2_000;
+
     /**
-     * 만료된 금액 없는 신호를 카테고리별로 묶어 확정한다.
-     * 부호가 맞는 ΔG 를 전부 모아 합계를 시도 횟수로 나눈다 — 나눠떨어지지 않으면(비용이 다른 시도가
-     * 섞임) 변동을 하나씩 순서대로 배정하고, 남는 시도는 미확인으로 남긴다.
+     * 만료된 금액 없는 신호를 확정한다. 신호마다 <b>자기 뒤에 온 잔고 변동 하나</b>와 짝짓는다.
+     *
+     * <p>예전엔 창 안의 같은 방향 변동을 전부 모아 나눴다 — 플리마켓 알림이 겹치면(2개 328냥,
+     * 5개 100냥) 둘을 합쳐 나누고, 같은 15초 안의 상점 구매(200,000)까지 가져가 버렸다. 그래서:
+     * <ul>
+     *   <li>후보는 신호 직전 {@value #DELTA_LEAD_MS}ms ~ 대기창 끝 사이 변동만, 창 비용으로 설명되는
+     *       변동(상점·강화 결제)은 제외.</li>
+     *   <li>{@value #BURST_MS}ms 안에 연달아 온 같은 종류 신호는 한 묶음. 변동 수가 신호 수 이상이면
+     *       순서대로 하나씩, 모자라면(잔고가 합쳐 내려옴) 합계를 나눈다 — 안 나눠떨어지면 순서대로 배정.</li>
+     *   <li>남는 변동은 건드리지 않는다(다른 신호·창 비용 몫).</li>
+     * </ul>
      */
     private void settleDeltaSignals(long now, long w) {
         long limit = Math.max(w, DELTA_SIGNAL_WAIT_MS);
-        Map<String, List<PendingSignal>> groups = new LinkedHashMap<>();
-        for (PendingSignal ps : signals) {
-            if (!ps.sig.amountFromDelta || now - ps.ts <= limit) continue;
-            groups.computeIfAbsent(ps.sig.category + "|" + ps.sig.flow, k -> new ArrayList<>()).add(ps);
-        }
-        for (List<PendingSignal> group : groups.values()) {
-            int sign = group.get(0).sig.expectedSign();
-            List<Long> taken = takeAllDeltas(sign);
-            String cat = group.get(0).sig.category;
-            int n = group.size();
-            if (taken.isEmpty()) {
-                // requireDelta(우편 수령처럼 돈이 안 올 수도 있는 문구)는 잔고가 그대로면 거래가 아니다
-                if (!group.get(0).sig.requireDelta) emitUnresolved(group, "잔고 변동 미검출");
-            } else {
-                long total = 0;
-                for (long d : taken) total += Math.abs(d);
-                if (total % n == 0) {
-                    for (PendingSignal ps : group) {
-                        emit(classifier.classifyByDelta(ps.sig, total / n, ps.ts,
-                                n > 1 ? "잔고 변동 합계를 " + n + "회로 나눔" : null));
-                    }
-                } else {
-                    for (int i = 0; i < n; i++) {
-                        PendingSignal ps = group.get(i);
-                        if (i < taken.size()) {
-                            emit(classifier.classifyByDelta(ps.sig, Math.abs(taken.get(i)), ps.ts, null));
-                        } else {
-                            emitUnresolved(List.of(ps), "잔고 변동 수 부족");
-                        }
-                    }
-                }
-                lastSettleInfo = cat + " " + n + "건 — 잔고 변동으로 기록";
+        while (true) {
+            PendingSignal oldest = null;
+            for (PendingSignal ps : signals) {
+                if (ps.sig.amountFromDelta && now - ps.ts > limit) { oldest = ps; break; }
+            }
+            if (oldest == null) return;
+            String key = oldest.sig.category + "|" + oldest.sig.flow;
+            List<PendingSignal> group = new ArrayList<>();
+            for (PendingSignal ps : signals) {
+                if (ps.sig.amountFromDelta && key.equals(ps.sig.category + "|" + ps.sig.flow)
+                        && ps.ts >= oldest.ts && ps.ts - oldest.ts <= BURST_MS) group.add(ps);
             }
             signals.removeAll(group);
+            settleGroup(group, limit);
         }
+    }
+
+    private void settleGroup(List<PendingSignal> group, long limit) {
+        PendingSignal first = group.get(0);
+        int sign = first.sig.expectedSign();
+        long from = first.ts - DELTA_LEAD_MS;
+        long to = group.get(group.size() - 1).ts + limit;
+        List<PendingDelta> cand = new ArrayList<>();
+        for (PendingDelta pd : deltas) {
+            if (Long.signum(pd.delta) != sign || pd.ts < from || pd.ts > to) continue;
+            if (findGuiCost(pd) != null) continue; // 창에 보인 결제 — settleByGuiCost 몫
+            cand.add(pd);
+        }
+        int n = group.size();
+        String cat = first.sig.category;
+        if (cand.isEmpty()) {
+            // requireDelta(우편 수령처럼 돈이 안 올 수도 있는 문구)는 잔고가 그대로면 거래가 아니다
+            if (!first.sig.requireDelta) emitUnresolved(group, "잔고 변동 미검출");
+            return;
+        }
+        if (cand.size() >= n) {
+            for (int i = 0; i < n; i++) {
+                PendingSignal ps = group.get(i);
+                PendingDelta pd = cand.get(i);
+                deltas.remove(pd);
+                emit(classifier.classifyByDelta(ps.sig, Math.abs(pd.delta), ps.ts, null));
+            }
+        } else {
+            long total = 0;
+            for (PendingDelta pd : cand) total += Math.abs(pd.delta);
+            deltas.removeAll(cand);
+            if (total % n == 0) {
+                for (PendingSignal ps : group) {
+                    emit(classifier.classifyByDelta(ps.sig, total / n, ps.ts,
+                            "잔고 변동 합계를 " + n + "회로 나눔"));
+                }
+            } else {
+                for (int i = 0; i < n; i++) {
+                    PendingSignal ps = group.get(i);
+                    if (i < cand.size()) {
+                        emit(classifier.classifyByDelta(ps.sig, Math.abs(cand.get(i).delta), ps.ts, null));
+                    } else if (!ps.sig.requireDelta) {
+                        emitUnresolved(List.of(ps), "잔고 변동 수 부족");
+                    }
+                }
+            }
+        }
+        lastSettleInfo = cat + " " + n + "건 — 잔고 변동으로 기록";
     }
 
     /** 금액을 끝내 못 알아낸 거래 — 버리지 않고 금액 0·미확인으로 남겨 빠졌다는 사실이 보이게 한다. */
@@ -302,19 +352,6 @@ public final class TransactionResolver {
             return true;
         }
         return false;
-    }
-
-    /** 부호가 맞는 ΔG 를 전부 꺼낸다(합산 유입 대응). */
-    private List<Long> takeAllDeltas(int sign) {
-        List<Long> out = new ArrayList<>();
-        Iterator<PendingDelta> it = deltas.iterator();
-        while (it.hasNext()) {
-            PendingDelta pd = it.next();
-            if (Long.signum(pd.delta) != sign) continue;
-            out.add(pd.delta);
-            it.remove();
-        }
-        return out;
     }
 
     private void emit(TransactionRecord rec) {
