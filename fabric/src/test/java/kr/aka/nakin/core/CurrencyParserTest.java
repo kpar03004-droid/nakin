@@ -204,6 +204,18 @@ class CurrencyParserTest {
         assertEquals("원석ㅣ지르콘", s.label);
     }
 
+    @Test void 플리마켓_금액없는_짧은_알림은_잔고변동으로() {
+        // 2026-10-01 실서버 원문(직후 ΔG −328) — 금액이 없다
+        TradeSignal s = only("PlayerA sold 2 다이아몬드");
+        assertEquals(Flow.EXPENSE, s.flow);
+        assertEquals("플리마켓", s.category);
+        assertEquals("다이아몬드", s.label);
+        assertEquals(2, s.qty);
+        assertTrue(s.amountFromDelta && s.requireDelta, "내 잔고가 줄 때만 기록");
+        // 금액이 있는 긴 형태는 여전히 메시지 금액
+        assertEquals(77400, only("PlayerA sold 9 원석ㅣ지르콘 to your shop for 77400.0냥.").amount);
+    }
+
     // ── 판매 영수증 · 낚시 · 보상 ──
 
     @Test void 판매완료_영수증은_합계_한줄만() {

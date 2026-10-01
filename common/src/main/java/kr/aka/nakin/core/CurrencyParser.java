@@ -279,6 +279,11 @@ public final class CurrencyParser {
         // 남이 내 구매 상점에 팖 → 내가 산 것(지출). 원문이 영어다.
         rule("^(\\S+) sold ([0-9]+) (.+?) to your shop for " + AMT + "냥",
                 m -> one(sig(Flow.EXPENSE, FLEA, amount(m.group(4)), parseInt(m.group(2)), m.group(3), null, null)));
+        // 금액 없는 짧은 형태 "miru0818 sold 2 다이아몬드"(2026-10-01 실서버, 직후 ΔG −328) → 잔고 변동으로 금액.
+        //   내 잔고가 안 줄면(남의 상점 알림 등) 기록하지 않는다.
+        rule("^(\\S+) sold ([0-9]+) (.+)$",
+                m -> one(new TradeSignal(Flow.EXPENSE, FLEA, 0, parseInt(m.group(2)), m.group(3), null,
+                        true, true, null)));
 
         // ── 낚시 ──
         rule("• 총 ([0-9]+)마리를 판매하여 " + AMT + "냥을 벌었습니다",
