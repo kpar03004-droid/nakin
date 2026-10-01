@@ -1,0 +1,12 @@
+{
+  "nakin.name": "낙인",
+  "nakin.key.toggle_hud": "HUD 표시 전환",
+  "nakin.key.open_stats": "정산 창 열기",
+  "nakin.key.edit_hud": "HUD 위치 편집",
+  "nakin.key.open_config": "설정 열기",
+  "nakin.hud.today_net": "오늘 순익",
+  "nakin.hud.income": "수입",
+  "nakin.hud.expense": "지출",
+  "nakin.config.title": "낙인 설정",
+  "key.category.nakin.main": "낙인"
+}

@@ -1,0 +1,12 @@
+{
+  "nakin.name": "Nakin",
+  "nakin.key.toggle_hud": "Toggle HUD",
+  "nakin.key.open_stats": "Open Stats Screen",
+  "nakin.key.edit_hud": "Edit HUD Position",
+  "nakin.key.open_config": "Open Config",
+  "nakin.hud.today_net": "Today Net",
+  "nakin.hud.income": "Income",
+  "nakin.hud.expense": "Expense",
+  "nakin.config.title": "Nakin Settings",
+  "key.category.nakin.main": "Nakin"
+}

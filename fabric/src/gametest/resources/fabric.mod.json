@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "id": "nakin-gametest",
+  "version": "1.0.0",
+  "name": "낙인 게임테스트",
+  "environment": "client",
+  "entrypoints": {
+    "fabric-client-gametest": [
+      "kr.aka.nakin.gametest.NakinClientGameTest"
+    ]
+  },
+  "depends": {
+    "nakin": "*"
+  }
+}

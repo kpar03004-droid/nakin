@@ -1,0 +1,37 @@
+# ── 빌드 산출물 ──
+build/
+.gradle/
+out/
+*.class
+run/
+runs/
+
+# ── 배포 jar ──
+# 소스와 함께 두면 저장소가 매 릴리스마다 무거워진다. 배포본은 Releases 로 올린다.
+dist/
+*.jar
+!gradle/wrapper/gradle-wrapper.jar
+
+# ── 로컬 전용 자료 (공개 금지) ──
+# 사용자 채팅 로그에서 뽑은 원문 카탈로그·재생 결과 — 다른 유저 닉네임과 대화가 들어 있다.
+local/
+# 서버 리소스팩에서 추출한 이미지 — 동글랜드 서버 아트 에셋이라 재배포하면 안 된다.
+리소스팩_아이콘/
+
+# ── 작업용 임시 스냅샷 ──
+dev/
+
+# ── 에디터/OS ──
+.idea/
+*.iml
+.vscode/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── 내부 작업 문서 (공개 안 함) ──
+# 운영진 소통·작업 메모·원문 분석은 저장소에 올리지 않는다. 공개 문서는 README·CHANGELOG·docs/사용_설명서.md 뿐.
+CLAUDE.md
+docs/*
+!docs/사용_설명서.md
+design/icons/_빌띵_이전아이콘/

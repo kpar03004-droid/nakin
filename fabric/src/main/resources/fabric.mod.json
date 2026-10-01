@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "id": "nakin",
+  "version": "${version}",
+  "name": "낙인",
+  "description": "동글랜드 냥 수입/지출/이체를 자동 집계해 HUD·정산창으로 보여주는 클라이언트 전용 가계부 모드. 화면에 이미 보이는 정보(잔고·채팅)만 재구성하고 서버로 아무것도 보내지 않습니다.",
+  "authors": [
+    "아카"
+  ],
+  "contact": {
+    "sources": "https://github.com/kpar03004-droid/nakin"
+  },
+  "license": "MIT",
+  "icon": "assets/nakin/icon.png",
+  "environment": "client",
+  "entrypoints": {
+    "client": [
+      "kr.aka.nakin.DtLedgerClient"
+    ]
+  },
+  "mixins": [
+    "nakin.mixins.json"
+  ],
+  "depends": {
+    "fabricloader": ">=0.19.0",
+    "minecraft": "~26.1.2",
+    "java": ">=25",
+    "fabric-api": "*"
+  },
+  "suggests": {
+    "yet_another_config_lib_v3": "*"
+  }
+}

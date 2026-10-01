@@ -1,0 +1,12 @@
+{
+  "required": true,
+  "package": "kr.aka.nakin.mixin",
+  "compatibilityLevel": "JAVA_25",
+  "client": [
+    "PlayerListHudAccessor",
+    "BossBarHudAccessor"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}
