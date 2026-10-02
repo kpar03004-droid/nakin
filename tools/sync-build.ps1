@@ -2,7 +2,7 @@
 #   OneDrive 안에서 빌드하면 동기화 락으로 build/ 삭제 실패·테스트 ClassNotFound 가 간헐적으로 난다(실측).
 #   robocopy 는 한글 경로에서 exit 16 으로 실패하므로 Copy-Item 을 쓴다.
 #   build/ .gradle/ 캐시는 지우지 않는다(증분 빌드 유지).
-param([string]$Build = "C:\Users\woosu\nakinbuild")
+param([string]$Build = (Join-Path $env:USERPROFILE "nakinbuild"))
 
 $src = Split-Path -Parent $PSScriptRoot
 if (-not (Test-Path $Build)) { New-Item -ItemType Directory -Path $Build | Out-Null }

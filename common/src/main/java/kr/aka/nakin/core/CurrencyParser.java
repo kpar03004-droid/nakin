@@ -276,7 +276,7 @@ public final class CurrencyParser {
         // 남이 내 판매 상점에서 삼 → 수입
         rule("^(\\S+) 님이 당신의 상점 ?에서 ([0-9]+) (.+?) 을\\(를\\) 구입했으며 당신은 " + AMT + "냥",
                 m -> one(sig(Flow.INCOME, FLEA, amount(m.group(4)), parseInt(m.group(2)), m.group(3), null, null)));
-        // 금액 없는 짧은 형태 "BDS_Star 님이 당신의 상점 에서 2 다이아몬드"(2026-10-01 실서버, 직후 ΔG +297
+        // 금액 없는 짧은 형태 "PlayerA 님이 당신의 상점 에서 2 다이아몬드"(2026-10-01 실서버, 직후 ΔG +297
         //   = 수수료 5% 뗀 실수령) → 잔고 변동으로 금액. 다음 줄 "32, 106, -50 에 있는 당신의 가게의 물품 …"은 위치 안내.
         rule("^(\\S+) 님이 당신의 상점 ?에서 ([0-9]+) (.+)$",
                 m -> one(new TradeSignal(Flow.INCOME, FLEA, 0, parseInt(m.group(2)), m.group(3), null,
@@ -284,7 +284,7 @@ public final class CurrencyParser {
         // 남이 내 구매 상점에 팖 → 내가 산 것(지출). 원문이 영어다.
         rule("^(\\S+) sold ([0-9]+) (.+?) to your shop for " + AMT + "냥",
                 m -> one(sig(Flow.EXPENSE, FLEA, amount(m.group(4)), parseInt(m.group(2)), m.group(3), null, null)));
-        // 금액 없는 짧은 형태 "miru0818 sold 2 다이아몬드"(2026-10-01 실서버, 직후 ΔG −328) → 잔고 변동으로 금액.
+        // 금액 없는 짧은 형태 "PlayerA sold 2 다이아몬드"(2026-10-01 실서버, 직후 ΔG −328) → 잔고 변동으로 금액.
         //   내 잔고가 안 줄면(남의 상점 알림 등) 기록하지 않는다.
         rule("^(\\S+) sold ([0-9]+) (.+)$",
                 m -> one(new TradeSignal(Flow.EXPENSE, FLEA, 0, parseInt(m.group(2)), m.group(3), null,
