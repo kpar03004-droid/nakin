@@ -30,14 +30,19 @@ public final class ChatWatcher {
                 handle(message);
             }
         });
-        ClientReceiveMessageEvents.CHAT.register((message, signedMessage, sender, params, receptionTimestamp) ->
-                handle(message));
+        // 유저가 보낸 채팅(CHAT)은 해석하지 않는다 — 거래 알림은 전부 서버 시스템 메시지로 온다.
+        //   유저가 "[동글상점] … 획득 금액: N 냥" 을 흉내 내 쳐도 기록되지 않고, 제보 기록에 남의 대화가
+        //   들어가지도 않는다(2026-10-05 Codex 리뷰).
     }
 
     private void handle(Component message) {
         String s = message.getString();
-        for (TradeSignal sig : parser.parse(s)) {
+        var signals = parser.parse(s);
+        for (TradeSignal sig : signals) {
             signalSink.accept(sig);
+        }
+        if (signals.isEmpty() && !CurrencyParser.isPlayerChat(s)) {
+            kr.aka.nakin.core.ActivityLog.unmatched(s);
         }
     }
 }

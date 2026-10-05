@@ -50,6 +50,15 @@ public final class BalanceWatcher {
 
     private final BalanceExtractor extractor = new BalanceExtractor();
     private Long lastBalance = null;
+    /** 연속으로 잔고를 못 읽은 틱 수 — 길어지면 대조를 "확인 불가"로(옛 값으로 '일치'라고 하지 않게). */
+    private int failTicks = 0;
+    private static final int STALE_TICKS = 40;
+    /** 잔고로 잡은 줄이 가짜로 판명됐을 때(대기 ΔG 무효화 등). */
+    private Runnable onRejected = () -> { };
+
+    public void setOnRejected(Runnable r) {
+        if (r != null) onRejected = r;
+    }
     private Long candidate = null;
     private int candidateTicks = 0;
     private int settleTicks = 0;
@@ -64,6 +73,17 @@ public final class BalanceWatcher {
     /** 액션바 텍스트 캡처(외부 GAME overlay 리스너가 호출). */
     public void captureActionBar(String text) {
         this.lastActionBar = text == null ? "" : text;
+    }
+
+    /** 확정된 현재 잔고. 아직 못 읽었거나 월드 이동 직후 정착 중이면 null. */
+    public Long confirmedBalance() {
+        return settleTicks > 0 || failTicks >= STALE_TICKS ? null : lastBalance;
+    }
+
+    /** 재접속 — 기준선을 버리고, 지난 접속에서 잔고가 아니라고 판정한 줄 모양도 잊는다. */
+    public void newSession() {
+        reset();
+        extractor.forgetRejected();
     }
 
     /** 현재 잔고 강제 리셋(재접속 등). 다음 변동부터 다시 추적. */
@@ -86,6 +106,8 @@ public final class BalanceWatcher {
         }
 
         Long bal = readBalance(client);
+        if (bal == null) failTicks++;
+        else failTicks = 0;
         if (bal == null) {
             lastReadInfo = "§c읽기 실패(화면에서 금액을 못 찾음)";
             return;
@@ -120,6 +142,13 @@ public final class BalanceWatcher {
                 lastBalance = bal;
                 candidate = null;
                 candidateTicks = 0;
+                if (extractor.noteDelta(delta, now)) {
+                    LOG.info("[nakin] 잔고로 잡은 줄이 작은 값만 오르내림 — 잔고가 아닌 줄로 보고 다시 찾습니다");
+                    lastBalance = null;
+                    kr.aka.nakin.core.WalletCheck.LIVE.reset(); // 엉뚱한 줄로 잡은 기준선은 버린다
+                    onRejected.run();
+                    return;
+                }
                 LOG.info("[nakin] ΔG = {} (now={})", GoldFormat.signed(delta), GoldFormat.format(bal));
                 deltaListener.accept(delta);
             }
@@ -160,6 +189,6 @@ public final class BalanceWatcher {
 
     /** 진단 표시용 — 리소스팩 아이콘 글리프(사용자 영역 문자)는 채팅에서 깨진 글자로 보이므로 뺀다. */
     private static String readable(String s) {
-        return s.replaceAll("[\\uE000-\\uF8FF\\x{F0000}-\\x{10FFFF}]+", " ").replaceAll(" {2,}", " ").strip();
+        return s.replaceAll("[\\uE000-\\uF8FF\\x{A0000}-\\x{10FFFF}]+", " ").replaceAll(" {2,}", " ").strip();
     }
 }

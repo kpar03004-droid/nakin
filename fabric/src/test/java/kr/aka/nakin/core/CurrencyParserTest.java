@@ -177,6 +177,26 @@ class CurrencyParserTest {
                 Flow.EXPENSE, "플리마켓", 19200);
     }
 
+    @Test void 플리마켓_구매_금액없는_블록은_잔고변동으로() {
+        // 2026-10-03 실서버 원문 — 남의 판매 상점에서 "모두" 구매, 총액 줄이 없다
+        TradeSignal s = only("+---------------------------------------------------+",
+                "l 성공적으로 구매했습니다:", "l 1471개의 레드스톤 블록",
+                "+---------------------------------------------------+");
+        assertEquals(Flow.EXPENSE, s.flow);
+        assertEquals("플리마켓", s.category);
+        assertEquals("레드스톤 블록", s.label);
+        assertEquals(1471, s.qty);
+        assertTrue(s.amountFromDelta && !s.requireDelta);
+    }
+
+    @Test void 추천보상은_내것만_잔고변동으로() {
+        TradeSignal s = only("[추천보상] _me님이 추천보상을 획득했습니다!");
+        assertEquals(Flow.INCOME, s.flow);
+        assertEquals("보상", s.category);
+        assertTrue(s.amountFromDelta && s.requireDelta);
+        assertTrue(feed("[추천보상] PlayerA님이 추천보상을 획득했습니다!").isEmpty(), "남의 추천보상 방송");
+    }
+
     @Test void 소수_금액은_반올림() {
         assertEquals(10454, only("l 성공적으로 판매했습니다:", "l 1개의 보석ㅣ신성 (총 10453.579999999783냥)").amount);
     }
@@ -211,13 +231,13 @@ class CurrencyParserTest {
         assertEquals("플리마켓", s.category);
         assertEquals("다이아몬드", s.label);
         assertEquals(2, s.qty);
-        assertTrue(s.amountFromDelta && s.requireDelta, "내 잔고가 줄 때만 기록");
+        assertTrue(s.amountFromDelta && !s.requireDelta, "금액은 잔고 변동, 없으면 미확인으로 남김");
         // 내 판매 상점에서 남이 산 짧은 알림(2026-10-01 실서버, 직후 ΔG +297) → 수입
         TradeSignal in = only("PlayerA 님이 당신의 상점 에서 2 다이아몬드");
         assertEquals(Flow.INCOME, in.flow);
         assertEquals("다이아몬드", in.label);
         assertEquals(2, in.qty);
-        assertTrue(in.amountFromDelta && in.requireDelta);
+        assertTrue(in.amountFromDelta && !in.requireDelta);
         assertTrue(parser.parse("32, 106, -50 에 있는 당신의 가게의 물품 다이아몬드", 0).isEmpty(), "위치 안내 줄");
         // 금액이 있는 긴 형태는 여전히 메시지 금액
         assertEquals(77400, only("PlayerA sold 9 원석ㅣ지르콘 to your shop for 77400.0냥.").amount);

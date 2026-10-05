@@ -78,6 +78,20 @@ public final class DailyAggregator {
         return out;
     }
 
+    /** 장부 날짜 from~to(양끝 포함)의 원본 레코드 — 통계 화면용. 원장(저장분)에서 읽는다. */
+    public List<TransactionRecord> records(LocalDate from, LocalDate to) {
+        List<TransactionRecord> out = new ArrayList<>();
+        // 리셋 시각 시프트로 경계 레코드가 옆 달 파일에 있을 수 있어 앞뒤 하루씩 넓혀 읽는다
+        YearMonth last = YearMonth.from(to.plusDays(1));
+        for (YearMonth ym = YearMonth.from(from.minusDays(1)); !ym.isAfter(last); ym = ym.plusMonths(1)) {
+            for (TransactionRecord r : store.loadMonth(ym)) {
+                LocalDate d = LedgerDates.ledgerDate(r.timestamp, config.dayResetHour);
+                if (!d.isBefore(from) && !d.isAfter(to)) out.add(r);
+            }
+        }
+        return out;
+    }
+
     public List<TransactionRecord> pending() {
         return pending;
     }
@@ -116,6 +130,27 @@ public final class DailyAggregator {
         if (!store.removeRecord(r)) return false;
         rebuild();
         return true;
+    }
+
+    /**
+     * 잘못 기록된 레코드의 금액·카테고리·설명을 고친다(내역에서 클릭 → 관리 탭 수정).
+     * 원래 값은 비고에 남겨 CSV 로도 추적된다. 확인된 값이므로 신뢰도는 HIGH.
+     */
+    public void editRecord(TransactionRecord r, long amount, String category, String label) {
+        if (r == null || amount < 0) return;
+        if (r.amount == amount && java.util.Objects.equals(r.category, category)
+                && java.util.Objects.equals(r.label, label)) return;
+        String before = "수동 수정(원래 " + kr.aka.nakin.util.GoldFormat.format(r.amount)
+                + " · " + r.category + (r.label == null || r.label.isEmpty() ? "" : " · " + r.label) + ")";
+        r.amount = amount;
+        r.category = category;
+        r.label = label;
+        r.confidence = TransactionRecord.Confidence.HIGH;
+        // 금액 미확인(0원·손익 제외)으로 남았던 줄을 고치면 이제 손익에 넣는다
+        if (!r.isTransfer()) r.countedInPnl = true;
+        r.note = r.note == null || r.note.isEmpty() ? before : before + " / " + r.note;
+        store.markEdited(r);
+        rebuild();
     }
 
     /**

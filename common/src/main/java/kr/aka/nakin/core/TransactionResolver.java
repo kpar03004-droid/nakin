@@ -48,7 +48,17 @@ public final class TransactionResolver {
         PendingSignal(TradeSignal sig, long ts) { this.sig = sig; this.ts = ts; }
     }
 
-    private record PendingDelta(long delta, long ts) {}
+    private static final class PendingDelta {
+        final long delta;
+        final long ts;
+        /** 이미 메시지 금액으로 남긴 기록의 늦은 갱신으로 짝지어짐 — 다른 신호가 가져가지 않고 대조에도 안 넣는다. */
+        boolean explained;
+
+        PendingDelta(long delta, long ts) {
+            this.delta = delta;
+            this.ts = ts;
+        }
+    }
 
     /** 창(대장간 등)에서 본 결제 비용 — 금액 → (카테고리, 라벨, 마지막으로 본 시각). */
     private record SeenCost(String category, String label, long seenAt) {}
@@ -96,6 +106,7 @@ public final class TransactionResolver {
 
     public void onSignal(TradeSignal sig, long now) {
         if (sig == null) return;
+        ActivityLog.signal(sig);
         lastSignalInfo = sig.category + " · " + sig.label + (sig.amountFromDelta ? "" : " · " + sig.amount);
         signals.add(new PendingSignal(sig, now));
     }
@@ -142,8 +153,14 @@ public final class TransactionResolver {
         return false;
     }
 
+    /** 처리 대기 중인 신호·ΔG 가 없는가 — 잔고 대조가 "지금 값이 확정된 상태"인지 판단. */
+    public boolean isIdle() {
+        return signals.isEmpty() && deltas.isEmpty();
+    }
+
     /** 만료된 신호/델타를 확정. 클라 틱마다 호출. */
     public void tick(long now) {
+        tickNow = now;
         long w = config.matchWindowMs;
 
         // 1) 메시지 금액 신호 ↔ ΔG 정확 매칭(부호 + 금액 ±1)
@@ -200,7 +217,13 @@ public final class TransactionResolver {
         while (dit.hasNext()) {
             PendingDelta pd = dit.next();
             if (now - pd.ts <= keep) continue;
-            if (pd.delta < 0) settleByGuiCost(pd);
+            // 늦게 온 ΔG 가 이미 메시지 금액으로 남긴 기록 몫이면 그걸로 끝 — 창 비용으로 또 기록하지 않는다
+            if (pd.explained || matchesRecentMessageRecord(pd, true)) {
+                dit.remove();
+                continue;
+            }
+            boolean used = pd.delta < 0 && settleByGuiCost(pd);
+            if (!used) unexplainedTotal += pd.delta; // 잔고 대조용
             dit.remove();
         }
     }
@@ -226,10 +249,10 @@ public final class TransactionResolver {
         return best;
     }
 
-    /** 짝 없는 잔고 감소가 최근 창에 보인 비용(또는 그 정수배)과 같으면 결제 기록. */
-    private void settleByGuiCost(PendingDelta pd) {
+    /** 짝 없는 잔고 감소가 최근 창에 보인 비용(또는 그 정수배)과 같으면 결제 기록. @return 기록했으면 true */
+    private boolean settleByGuiCost(PendingDelta pd) {
         GuiMatch m = findGuiCost(pd);
-        if (m == null) return;
+        if (m == null) return false;
         long mag = -pd.delta;
         for (int i = 0; i < m.times; i++) {
             TradeSignal sig = TradeSignal.of(TradeSignal.Flow.EXPENSE, m.cost.category,
@@ -238,6 +261,62 @@ public final class TransactionResolver {
                     "창 표시 비용과 잔고 변동 일치" + (m.times > 1 ? " (" + m.times + "회 합산 분할)" : "")));
         }
         lastSettleInfo = m.cost.label + " " + m.times + "건 — 창 표시 비용으로 기록";
+        return true;
+    }
+
+    /**
+     * 어떤 기록에도 쓰이지 않고 버려진 잔고 변동의 합 — 잔고 대조({@link WalletCheck})가 읽는다.
+     * 장부 합계를 잔고와 비교하지 않고 "설명 안 된 변동"만 세므로, 지난 기록 수정·날짜 경계·
+     * 메시지 금액과 실제 변동의 1냥 반올림 차이·접속 전 체결 알림에 흔들리지 않는다(2026-10-05 Codex 리뷰).
+     */
+    private long unexplainedTotal;
+    /** 마지막 tick 시각 — 기록을 남긴 처리 시각(신호 시각이 아니라). */
+    private long tickNow;
+
+    /** 잔고 확인 없이(메시지 금액으로) 남긴 최근 기록 {처리 시각, 잔고 영향} — 늦게 온 ΔG 를 그 기록 몫으로 본다. */
+    private final java.util.ArrayDeque<long[]> recentMessageOnly = new java.util.ArrayDeque<>();
+    private static final long LATE_DELTA_MS = 30_000;
+
+    public long unexplainedTotal() {
+        return unexplainedTotal;
+    }
+
+    /** 새 접속 — 이전 서버의 대기 ΔG·늦은 갱신 짝 후보는 이번 접속과 무관하다. */
+    public void newSession() {
+        deltas.clear();
+        recentMessageOnly.clear();
+        // 금액을 잔고 변동으로 정할 신호는 새 서버의 변동과 짝지으면 안 된다 — 지금 정산(미확인)하고 비운다
+        List<PendingSignal> stale = new ArrayList<>();
+        for (PendingSignal ps : signals) {
+            if (ps.sig.amountFromDelta || ps.sig.isCostHint()) stale.add(ps);
+        }
+        signals.removeAll(stale);
+        for (PendingSignal ps : stale) {
+            if (ps.sig.amountFromDelta && !ps.sig.requireDelta) emitUnresolved(List.of(ps), "접속이 바뀌어 잔고 변동 미확인");
+        }
+    }
+
+    /** 잔고로 잘못 잡았던 줄에서 나온 대기 ΔG 를 버린다(거래가 아니므로 대조에도 넣지 않는다). */
+    public void discardPendingDeltas() {
+        deltas.clear();
+    }
+
+    /**
+     * 신호 대기창이 끝난 뒤에야 잔고가 갱신된 경우(송금 등) — 같은 방향·같은 금액(±1)의 최근 기록이 있으면 설명됨.
+     * @param consume 짝을 찾으면 후보에서 지울지(만료 정산) / 확인만 할지(다른 신호가 가져가지 않게)
+     */
+    private boolean matchesRecentMessageRecord(PendingDelta pd, boolean consume) {
+        recentMessageOnly.removeIf(e -> pd.ts - e[0] > LATE_DELTA_MS);
+        Iterator<long[]> it = recentMessageOnly.iterator();
+        while (it.hasNext()) {
+            long[] e = it.next();
+            if (Long.signum(e[1]) == Long.signum(pd.delta)
+                    && Math.abs(Math.abs(e[1]) - Math.abs(pd.delta)) <= AMOUNT_TOLERANCE) {
+                if (consume) it.remove();
+                return true;
+            }
+        }
+        return false;
     }
 
     /** 잔고 표시가 채팅보다 먼저 갱신되는 경우를 위한 여유. */
@@ -286,6 +365,11 @@ public final class TransactionResolver {
         for (PendingDelta pd : deltas) {
             if (Long.signum(pd.delta) != sign || pd.ts < from || pd.ts > to) continue;
             if (findGuiCost(pd) != null) continue; // 창에 보인 결제 — settleByGuiCost 몫
+            if (pd.explained) continue;
+            if (matchesRecentMessageRecord(pd, true)) { // 이미 기록된 거래의 늦은 잔고 갱신 — 일대일로 짝지음
+                pd.explained = true;
+                continue;
+            }
             cand.add(pd);
         }
         int n = group.size();
@@ -346,7 +430,7 @@ public final class TransactionResolver {
         Iterator<PendingDelta> it = deltas.iterator();
         while (it.hasNext()) {
             PendingDelta pd = it.next();
-            if (Long.signum(pd.delta) != sign) continue;
+            if (pd.explained || Long.signum(pd.delta) != sign) continue;
             if (Math.abs(Math.abs(pd.delta) - magnitude) > AMOUNT_TOLERANCE) continue;
             it.remove();
             return true;
@@ -355,6 +439,10 @@ public final class TransactionResolver {
     }
 
     private void emit(TransactionRecord rec) {
+        if (!rec.crossChecked && rec.amount > 0) {
+            boolean in = rec.kind == TransactionRecord.Kind.INCOME || rec.kind == TransactionRecord.Kind.TRANSFER_IN;
+            recentMessageOnly.addLast(new long[]{tickNow, in ? rec.amount : -rec.amount});
+        }
         LOG.info("[nakin] 레코드: {}", rec);
         sink.accept(rec);
     }

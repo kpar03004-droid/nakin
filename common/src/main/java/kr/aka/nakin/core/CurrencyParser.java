@@ -44,6 +44,7 @@ public final class CurrencyParser {
     private static final Pattern PLAYER_CHAT = Pattern.compile(
             "\\[전챗\\]"                                       // 전체채팅(앞에 아이콘 글리프)
           + "|^\\[지역채팅\\]"
+          + "|^<[^>]{1,24}> "                                  // 바닐라 형식 대화 "<닉> …"
           + "|^\\[[^\\]]{1,12}\\] <"                           // [눈꽃] <닉> · [구름] <닉> 등 채널
           + "|^(?:마을원|마을장|부마을장) \\S+ : "              // 마을 채팅
           + "|\\S+ → \\S+ \\|"                                 // 귓속말(닉 → 나 | …)
@@ -81,6 +82,11 @@ public final class CurrencyParser {
 
     public static CurrencyParser createDefault() {
         return new CurrencyParser(null);
+    }
+
+    /** 유저 대화 채널 줄인가 — 제보 기록에 남의 대화를 넣지 않으려고 밖에서도 쓴다. */
+    public static boolean isPlayerChat(String rawLine) {
+        return rawLine != null && PLAYER_CHAT.matcher(normalize(rawLine)).find();
     }
 
     public List<TradeSignal> parse(String line) {
@@ -131,7 +137,9 @@ public final class CurrencyParser {
     private static final Pattern DIRECT_ITEM = Pattern.compile("^[+-] .+ [0-9]+개$");
     private static final Pattern FLEA_HEAD = Pattern.compile("^l 성공적으로 (판매|구매)했습니다:$");
     private static final Pattern FLEA_LINE = Pattern.compile("^l ([0-9]+)개의 (.+?) \\(총 " + AMT + "냥\\)$");
-    private static final Pattern RECEIPT_HEAD = Pattern.compile("^\\[판매 완료\\]$");
+    /** 금액 없는 형태 "l 1471개의 레드스톤 블록"(2026-10-03 실서버, 남의 판매 상점에서 구매) → 잔고 변동으로 금액. */
+    private static final Pattern FLEA_LINE_NOAMT = Pattern.compile("^l ([0-9]+)개의 (.+)$");
+    private static final Pattern RECEIPT_HEAD =Pattern.compile("^\\[판매 완료\\]$");
     private static final Pattern RECEIPT_ITEM = Pattern.compile("^\\[(.+?)\\] x([0-9]+)(.*?) : " + AMT + "냥$");
     private static final Pattern RECEIPT_TOTAL = Pattern.compile("^합계: " + AMT + "냥$");
 
@@ -192,6 +200,13 @@ public final class CurrencyParser {
                     int qty = parseInt(m.group(1));
                     out.add(sig(sold ? Flow.INCOME : Flow.EXPENSE, FLEA, amount(m.group(3)), qty,
                             m.group(2), raw, null));
+                    endBlock();
+                    return true;
+                }
+                if ((m = FLEA_LINE_NOAMT.matcher(line)).find()) {
+                    boolean sold = block == Block.FLEA_SOLD;
+                    out.add(new TradeSignal(sold ? Flow.INCOME : Flow.EXPENSE, FLEA, 0, parseInt(m.group(1)),
+                            m.group(2), raw, true, false, sold ? "수수료 차감 후 실수령" : null));
                     endBlock();
                     return true;
                 }
@@ -280,15 +295,16 @@ public final class CurrencyParser {
         //   = 수수료 5% 뗀 실수령) → 잔고 변동으로 금액. 다음 줄 "32, 106, -50 에 있는 당신의 가게의 물품 …"은 위치 안내.
         rule("^(\\S+) 님이 당신의 상점 ?에서 ([0-9]+) (.+)$",
                 m -> one(new TradeSignal(Flow.INCOME, FLEA, 0, parseInt(m.group(2)), m.group(3), null,
-                        true, true, "수수료 차감 후 실수령")));
+                        true, false, "수수료 차감 후 실수령")));
         // 남이 내 구매 상점에 팖 → 내가 산 것(지출). 원문이 영어다.
         rule("^(\\S+) sold ([0-9]+) (.+?) to your shop for " + AMT + "냥",
                 m -> one(sig(Flow.EXPENSE, FLEA, amount(m.group(4)), parseInt(m.group(2)), m.group(3), null, null)));
         // 금액 없는 짧은 형태 "PlayerA sold 2 다이아몬드"(2026-10-01 실서버, 직후 ΔG −328) → 잔고 변동으로 금액.
-        //   내 잔고가 안 줄면(남의 상점 알림 등) 기록하지 않는다.
+        //   잔고 변동이 없으면 금액 미확인으로 남기고 알린다 — 내가 없을 때 체결되면 돈은 이미 빠졌고 알림만
+        //   접속 후에 온다("PlayerA sold 1728 다이아몬드", 2026-10-05 실서버, 직후 ΔG 없음).
         rule("^(\\S+) sold ([0-9]+) (.+)$",
                 m -> one(new TradeSignal(Flow.EXPENSE, FLEA, 0, parseInt(m.group(2)), m.group(3), null,
-                        true, true, null)));
+                        true, false, null)));
 
         // ── 낚시 ──
         rule("• 총 ([0-9]+)마리를 판매하여 " + AMT + "냥을 벌었습니다",
@@ -356,6 +372,10 @@ public final class CurrencyParser {
         //    15초 안에 잔고가 늘면 그 금액을 보상으로, 아이템만 받았으면(잔고 그대로) 아무것도 안 남는다.
         rule("^[0-9]+개의 아이템을 수령했습니다",
                 m -> one(TradeSignal.byDelta(Flow.INCOME, REWARD, "우편 수령", null).requiringDelta()));
+        // "[추천보상] <닉>님이 추천보상을 획득했습니다!" — 모두에게 방송된다. 내 닉일 때만. 1,000냥 날은
+        //   바로 잔고가 늘고(2026-10-02 실측 +1,000), 아이템 날은 우편으로 가서 잔고가 그대로다.
+        rule("^\\[추천보상\\] (\\S+?)님이 추천보상을 획득했습니다",
+                m -> self(m.group(1), TradeSignal.byDelta(Flow.INCOME, REWARD, "추천 보상", null).requiringDelta()));
         rule("^\\[동글 패스\\] 보상을 수령하였습니다",
                 m -> one(TradeSignal.byDelta(Flow.INCOME, REWARD, "동글 패스", null).requiringDelta()));
         // +5강 이상 성공 서버 방송은 기록에 쓰지 않는다. 생활장비 강화는 대장간 창의 비용 줄

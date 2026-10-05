@@ -52,6 +52,8 @@ public final class DtConfig {
      * <p>새 버전을 낼 때는 이 파일의 latest 만 고치면 된다(모드 재배포 불필요).
      * 공개 저장소라 로그인 없이 읽히며, 모드는 GET 한 번만 하고 아무것도 보내지 않는다.
      */
+    public String lastSeenWhatsNew = "";         // 「새로워진 점」 카드를 닫은 버전
+
     public String updateCheckUrl =
             "https://raw.githubusercontent.com/kpar03004-droid/nakin/main/update.json";
 

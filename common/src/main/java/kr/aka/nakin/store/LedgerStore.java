@@ -123,6 +123,16 @@ public final class LedgerStore {
         return removed;
     }
 
+    /**
+     * 이미 저장된 레코드를 제자리에서 고친 뒤 호출 — 그 달 파일을 즉시 다시 쓴다.
+     * 레코드 인스턴스는 로드된 목록과 공유되므로(집계도 같은 객체) 필드만 바꾸면 된다.
+     */
+    public void markEdited(TransactionRecord r) {
+        if (r == null) return;
+        dirty.add(monthOf(r.timestamp));
+        flushNow();
+    }
+
     public void commit(TransactionRecord r) {
         YearMonth ym = monthOf(r.timestamp);
         loadMonth(ym).add(r);

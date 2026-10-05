@@ -62,6 +62,7 @@ public final class DtLedgerClient implements ClientModInitializer {
             store.commit(rec);
             aggregator.addLive(rec);
             if (inSingleplayer[0]) singleplayerRecords.add(rec);
+            kr.aka.nakin.core.ActivityLog.record(rec);
         };
         TransactionResolver resolver = new TransactionResolver(config, classifier, sink);
         // 금액을 못 알아낸 거래를 채팅으로 알린다 — 조용히 사라지면 유저가 알 방법이 없다.
@@ -69,7 +70,7 @@ public final class DtLedgerClient implements ClientModInitializer {
             Minecraft mc = Minecraft.getInstance();
             mc.execute(() -> {
                 if (mc.player == null) return;
-                for (String line : msg.split("\n")) mc.player.sendSystemMessage(Component.literal(line));
+                for (String line : msg.split("\n")) mc.player.sendSystemMessage(kr.aka.nakin.ui.ChatText.of(line));
             });
         });
 
@@ -78,7 +79,11 @@ public final class DtLedgerClient implements ClientModInitializer {
             var user = Minecraft.getInstance().getUser();
             return user == null ? null : user.getName();
         });
-        BalanceWatcher balanceWatcher = new BalanceWatcher(config, resolver::onDelta);
+        BalanceWatcher balanceWatcher = new BalanceWatcher(config, delta -> {
+            kr.aka.nakin.core.ActivityLog.delta(delta);
+            resolver.onDelta(delta);
+        });
+        balanceWatcher.setOnRejected(resolver::discardPendingDeltas);
         ChatWatcher chatWatcher = new ChatWatcher(parser, resolver::onSignal,
                 balanceWatcher::captureActionBar);
 
@@ -108,6 +113,9 @@ public final class DtLedgerClient implements ClientModInitializer {
 
             balanceWatcher.tick(client, now);   // 시간 기반 — 매 틱 유지
             resolver.tick(now);
+            kr.aka.nakin.core.WalletCheck.LIVE.observe(now, balanceWatcher.confirmedBalance() != null,
+                    kr.aka.nakin.util.LedgerDates.today(config.dayResetHour),
+                    resolver.unexplainedTotal(), resolver.isIdle());
             store.tick(now);
 
             // 새 버전 재확인 — 실제 네트워크 요청은 UpdateChecker 가 1시간 간격으로만 낸다.
@@ -118,7 +126,9 @@ public final class DtLedgerClient implements ClientModInitializer {
         // 접속 시 잔고 기준선 리셋, 종료 시 저장 flush
         ClientPlayConnectionEvents.JOIN.register((handler, sender, client) -> {
             inSingleplayer[0] = client.hasSingleplayerServer();
-            balanceWatcher.reset();
+            balanceWatcher.newSession(); // 지난 접속에서 버린 잔고 줄 모양도 잊는다
+            resolver.newSession();
+            kr.aka.nakin.core.WalletCheck.LIVE.reset();
             checkForUpdate(config, client);
         });
         ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> {
@@ -171,7 +181,7 @@ public final class DtLedgerClient implements ClientModInitializer {
                             msg -> {
                                 Minecraft mc = Minecraft.getInstance();
                                 mc.execute(() -> {
-                                    if (mc.player != null) mc.player.sendSystemMessage(Component.literal("§6[낙인] §r" + msg));
+                                    if (mc.player != null) mc.player.sendSystemMessage(kr.aka.nakin.ui.ChatText.of("§6[낙인] §r" + msg));
                                 });
                             }));
         } catch (Exception e) {
@@ -194,32 +204,32 @@ public final class DtLedgerClient implements ClientModInitializer {
             //   ModUpdater 에 1시간 쿨다운이 내장돼 있어 GitHub 비인증 한도(시간당 60회)는 걱정 없다.
             var updater = kr.aka.nakin.update.UpdateInstaller.get();
             if (updater != null) updater.check();
-            client.player.sendSystemMessage(Component.literal("§6§m                                              "));
-            client.player.sendSystemMessage(Component.literal("§6§l 낙인§r§f  새 버전 §a§l" + release.version()
+            client.player.sendSystemMessage(kr.aka.nakin.ui.ChatText.of("§6§m                                              "));
+            client.player.sendSystemMessage(kr.aka.nakin.ui.ChatText.of("§6§l 낙인§r§f  새 버전 §a§l" + release.version()
                     + "§r §7(현재 " + current + ")"));
             if (release.notes() != null && !release.notes().isBlank()) {
-                client.player.sendSystemMessage(Component.literal("§7   " + release.notes()));
+                client.player.sendSystemMessage(kr.aka.nakin.ui.ChatText.of("§7   " + release.notes()));
             }
             String url = release.url();
             if (url != null && (url.startsWith("https://") || url.startsWith("http://"))) {
-                client.player.sendSystemMessage(Component.literal("")
-                        .append(Component.literal("§b§n » 다운로드 (여기 클릭)")
+                client.player.sendSystemMessage(kr.aka.nakin.ui.ChatText.of("")
+                        .append(kr.aka.nakin.ui.ChatText.of("§b§n » 다운로드 (여기 클릭)")
                                 .withStyle(st -> st
                                         .withClickEvent(new ClickEvent.OpenUrl(java.net.URI.create(url)))
                                         .withHoverEvent(new HoverEvent.ShowText(
-                                                Component.literal("§7" + url)))))
-                        .append(Component.literal("§r§8   · 기존 파일 삭제 후 교체")));
+                                                kr.aka.nakin.ui.ChatText.of("§7" + url)))))
+                        .append(kr.aka.nakin.ui.ChatText.of("§r§8   · 기존 파일 삭제 후 교체")));
             }
             // 자동 설치가 가능한 환경이면 한 줄 더. 클릭은 '확인 화면'을 열 뿐,
             // 바로 받지 않는다 — 다운로드는 그 화면에서 동의해야 시작된다.
             if (kr.aka.nakin.update.UpdateInstaller.available()) {
-                client.player.sendSystemMessage(Component.literal("")
-                        .append(Component.literal("§a§n » 모드가 대신 설치 (여기 클릭)")
+                client.player.sendSystemMessage(kr.aka.nakin.ui.ChatText.of("")
+                        .append(kr.aka.nakin.ui.ChatText.of("§a§n » 모드가 대신 설치 (여기 클릭)")
                                 .withStyle(st -> st
                                         .withClickEvent(new ClickEvent.RunCommand("낙인 업데이트"))
                                         .withHoverEvent(new HoverEvent.ShowText(
-                                                Component.literal("§7확인 화면을 엽니다. 바로 받지 않습니다.")))))
-                        .append(Component.literal("§r§8   · 동의 후 진행")));
+                                                kr.aka.nakin.ui.ChatText.of("§7확인 화면을 엽니다. 바로 받지 않습니다.")))))
+                        .append(kr.aka.nakin.ui.ChatText.of("§r§8   · 동의 후 진행")));
             }
         }));
     }

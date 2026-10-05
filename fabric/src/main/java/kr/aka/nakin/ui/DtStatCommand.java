@@ -85,7 +85,33 @@ public final class DtStatCommand {
         });
         both(root, "업데이트", "update", b -> b.executes(ctx -> openUpdateScreen()));
         both(root, "테스트", "test", b -> b.executes(ctx -> openTestScreen(ctx.getSource())));
+        both(root, "제보", "report", b -> b.executes(ctx -> report(ctx.getSource())));
+        both(root, "건의", "feedback", b -> b.executes(ctx -> report(ctx.getSource())));
         return root;
+    }
+
+    /**
+     * /낙인 제보 — 최근 채팅·잔고 변동·기록을 평문으로 클립보드에 넣고 제보 폼 링크를 보여준다.
+     * 모드는 아무것도 보내지 않는다. 폼을 열지, 붙여넣을지는 사용자가 정한다.
+     */
+    private int report(FabricClientCommandSource src) {
+        send(src, copyReport());
+        String url = kr.aka.nakin.core.ActivityLog.REPORT_FORM_URL;
+        src.sendFeedback(ChatText.of("§b§n » 건의·버그 제보 폼 열기 (여기 클릭)")
+                .withStyle(st -> st.withClickEvent(new net.minecraft.network.chat.ClickEvent.OpenUrl(
+                        java.net.URI.create(url)))));
+        return 1;
+    }
+
+    static String copyReport() {
+        String ver = net.fabricmc.loader.api.FabricLoader.getInstance()
+                .getModContainer("nakin")
+                .map(c -> c.getMetadata().getVersion().getFriendlyString())
+                .orElse("?");
+        String text = kr.aka.nakin.core.ActivityLog.report(kr.aka.nakin.core.ActivityLog.header(
+                ver, kr.aka.nakin.watcher.BalanceWatcher.lastReadInfo()));
+        Minecraft.getInstance().keyboardHandler.setClipboard(text);
+        return "§a제보용 기록을 클립보드에 복사했어요. §7제보 폼의 '관련 채팅 문구' 칸에 Ctrl+V 로 붙여 주세요.";
     }
 
     /**
@@ -275,7 +301,7 @@ public final class DtStatCommand {
             if (screen != null) {
                 mc.setScreen(screen);
             } else {
-                src.sendFeedback(Component.literal("§cYACL 설정 화면을 열 수 없습니다. config/nakin/config.json 을 직접 편집하세요."));
+                src.sendFeedback(ChatText.of("§cYACL 설정 화면을 열 수 없습니다. config/nakin/config.json 을 직접 편집하세요."));
             }
         });
         return 1;
@@ -314,6 +340,6 @@ public final class DtStatCommand {
     }
 
     private void send(FabricClientCommandSource src, String msg) {
-        src.sendFeedback(Component.literal(msg));
+        src.sendFeedback(ChatText.of(msg));
     }
 }

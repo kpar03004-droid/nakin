@@ -29,7 +29,7 @@ public final class TradeSignal {
     private static final Pattern DECOR_ICONS = Pattern.compile(
             "[\\u0000-\\u001F\\u007F"
           + "\\uE000-\\uF8FF\\uFFF0-\\uFFFF"
-          + "\\x{F0000}-\\x{FFFFD}\\x{100000}-\\x{10FFFD}"
+          + "\\x{A0000}-\\x{10FFFD}"  // 동글 보스바 글리프는 U+CE000~D00FF(보충 평면 미할당 영역, 2026-10-05 실측)
           + "\\uA000-\\uA4CF"
           + "\\u2460-\\u24FF"
           + "\\u2700-\\u27BF"
